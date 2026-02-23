@@ -29,6 +29,17 @@ FORMAT_LABELS = {
 
 
 def _read_installed_version() -> str | None:
+    version_path = Path(__file__).resolve().parent / "VERSION.txt"
+    try:
+        if version_path.exists():
+            text = version_path.read_text(encoding="utf-8").strip()
+            return text or None
+    except Exception:
+        return None
+    return None
+
+
+def _read_packaged_version() -> str | None:
     version_path = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "PTA" / "version.txt"
     try:
         if version_path.exists():
@@ -787,9 +798,11 @@ def main() -> None:
     with tabs[6]:
         render_trends()
 
-    installed_version = _read_installed_version()
-    if installed_version:
-        st.caption(f"PTA version: {installed_version}")
+    project_version = _read_installed_version()
+    packaged_version = _read_packaged_version()
+    display_version = project_version or packaged_version
+    if display_version:
+        st.caption(f"PTA version: {display_version}")
     else:
         st.caption("PTA version: development build")
 

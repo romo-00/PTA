@@ -19,8 +19,39 @@ LOG_PATH = resolve_logs_dir() / "mt5_ingest.log"
 DEFAULT_MT5_TERMINAL_PATH = r"C:\Program Files\Fusion Markets MT5 Terminal\terminal64.exe"
 
 
+def _version_file_candidates() -> list[Path]:
+    here = Path(__file__).resolve()
+    # Source layout: ...\src\pta_agent\mt5_ingest.py -> project root = parents[2]
+    source_root = here.parents[2] if len(here.parents) > 2 else None
+    frozen_base = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else None
+    candidates: list[Path] = []
+    if source_root is not None:
+        candidates.append(source_root / "VERSION.txt")
+    if frozen_base is not None:
+        candidates.append(frozen_base / "VERSION.txt")
+        candidates.append(frozen_base.parent / "VERSION.txt")
+    return candidates
+
+
+def _read_version_txt() -> str | None:
+    for candidate in _version_file_candidates():
+        try:
+            if candidate.exists():
+                text = candidate.read_text(encoding="utf-8").strip()
+                if text:
+                    return text
+        except Exception:
+            continue
+    return None
+
+
 def _runtime_version() -> str:
-    return os.environ.get("PTA_AGENT_VERSION", AGENT_BUILD_VERSION)
+    if "PTA_AGENT_VERSION" in os.environ and os.environ["PTA_AGENT_VERSION"].strip():
+        return os.environ["PTA_AGENT_VERSION"].strip()
+    file_version = _read_version_txt()
+    if file_version:
+        return file_version
+    return AGENT_BUILD_VERSION
 
 
 def _runtime_exe_path() -> str:
@@ -422,9 +453,17 @@ def run_ingest(
 
 
 def run_status(db_path: str | None = None, mt5_terminal_path: str | None = None) -> int:
+    configure_logging()
     db_target = resolve_db_path(db_path)
     log_target = LOG_PATH
     terminal_path = mt5_terminal_path or DEFAULT_MT5_TERMINAL_PATH
+    logging.info(
+        "PTA MT5 status starting (version=%s, exe=%s, pid=%s, terminal_path=%s)",
+        _runtime_version(),
+        _runtime_exe_path(),
+        os.getpid(),
+        terminal_path,
+    )
 
     mt5_mod, mt5_import_err = _import_mt5()
     mt5_ok = False
@@ -458,6 +497,14 @@ def run_status(db_path: str | None = None, mt5_terminal_path: str | None = None)
 
     print(f"mt5_deals count: {deals_count}")
     print(f"watermark_epoch: {watermark or '0'}")
+    logging.info(
+        "PTA MT5 status complete (version=%s, mt5_ok=%s, db=%s, deals=%s, watermark_epoch=%s)",
+        _runtime_version(),
+        mt5_ok,
+        db_target,
+        deals_count,
+        watermark or "0",
+    )
     return 0
 
 
