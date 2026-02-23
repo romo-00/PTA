@@ -1,0 +1,10 @@
+﻿pandas==2.1.4
+numpy==1.26.4
+lxml
+openpyxl
+streamlit
+python-dateutil
+duckdb
+pytest
+MetaTrader5
+pyinstaller

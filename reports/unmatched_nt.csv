@@ -1,0 +1,1 @@
+source,trade_id,symbol_raw,symbol_norm,side,qty,entry_time_utc,exit_time_utc,entry_price,exit_price,net_profit

@@ -1,0 +1,20 @@
+# Python artifacts
+__pycache__/
+*.pyc
+
+# Virtual environments
+.venv/
+
+# Build outputs
+build/
+dist/
+installer/Output/
+
+# Runtime data
+*.log
+pta.duckdb
+
+# Windows ProgramData-style paths
+ProgramData/
+C:/ProgramData/
+**/ProgramData/
