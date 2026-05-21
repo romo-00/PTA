@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from importers.mt5_xlsx import load_mt5_xlsx
@@ -31,7 +32,7 @@ def main() -> None:
         MatchConfig(nt_entry_shift_seconds=args.nt_entry_shift_seconds),
     )
 
-    reports_dir = Path("reports")
+    reports_dir = Path(os.getenv("PTA_REPORTS_DIR", "reports"))
     reports_dir.mkdir(parents=True, exist_ok=True)
     matched.to_csv(reports_dir / "matched.csv", index=False)
     unmatched_nt.to_csv(reports_dir / "unmatched_nt.csv", index=False)

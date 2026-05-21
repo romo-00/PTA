@@ -1,0 +1,4 @@
+-r requirements.txt
+
+MetaTrader5
+pyinstaller

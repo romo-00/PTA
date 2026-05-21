@@ -16,7 +16,7 @@ try {
 
     $numpyMajor = & $Python -c "import numpy as np; print(np.__version__.split('.')[0])"
     if ([int]$numpyMajor -ge 2) {
-        throw "Incompatible NumPy detected (>=2). MetaTrader5 requires NumPy 1.x in this build. Run: `"$Python -m pip install -r requirements.txt`" and rebuild."
+        throw "Incompatible NumPy detected (>=2). MetaTrader5 requires NumPy 1.x in this build. Run: `"$Python -m pip install -r requirements-desktop.txt`" and rebuild."
     }
 
     $timestamp = Get-Date -Format "yyyyMMdd_HHmm"

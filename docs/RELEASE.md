@@ -10,7 +10,7 @@
 Install Python deps:
 
 ```powershell
-py -m pip install -r requirements.txt
+py -m pip install -r requirements-desktop.txt
 ```
 
 ## One-command build

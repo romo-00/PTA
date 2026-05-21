@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from datetime import datetime
+import os
 from pathlib import Path
 
 import numpy as np
@@ -8,7 +9,7 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
-REPORTS_DIR = Path("reports")
+REPORTS_DIR = Path(os.getenv("PTA_REPORTS_DIR", "reports"))
 
 
 def _points(df: pd.DataFrame, entry_col: str, exit_col: str, side_col: str) -> pd.Series:
@@ -78,6 +79,29 @@ def _table(ws, row: int, headers: list[str], records: list[list[object]]) -> int
     return row
 
 
+def _instrument_label(source_df: pd.DataFrame, target_df: pd.DataFrame) -> str:
+    symbols: list[str] = []
+    for df in (source_df, target_df):
+        if "symbol_norm" not in df.columns:
+            continue
+        vals = (
+            df["symbol_norm"]
+            .astype(str)
+            .str.strip()
+            .replace({"": pd.NA, "nan": pd.NA, "UNKNOWN": pd.NA})
+            .dropna()
+            .unique()
+            .tolist()
+        )
+        symbols.extend(vals)
+    unique_symbols = sorted(set(symbols))
+    if not unique_symbols:
+        return "Instrument: mixed / unknown"
+    if len(unique_symbols) == 1:
+        return f"Instrument: {unique_symbols[0]}"
+    return f"Instrument: {', '.join(unique_symbols)}"
+
+
 def generate_daily_report_xlsx(data: dict, mt5_timezone: str, matching_mode_label: str) -> tuple[Path, bytes]:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -89,6 +113,7 @@ def generate_daily_report_xlsx(data: dict, mt5_timezone: str, matching_mode_labe
     settings = data.get("settings", {}) if isinstance(data, dict) else {}
     date_range_start = settings.get("date_filter_start")
     date_range_end = settings.get("date_filter_end")
+    aud_rate_map = settings.get("aud_rate_map", {}) if isinstance(settings, dict) else {}
 
     nt_stats = _perf_stats(nt_df, "entry_price", "exit_price", "side", "entry_time_utc")
     mt5_stats = _perf_stats(mt5_df, "entry_price", "exit_price", "side", "entry_time_utc")
@@ -99,12 +124,24 @@ def generate_daily_report_xlsx(data: dict, mt5_timezone: str, matching_mode_labe
 
     entry_diff = pd.to_numeric(matched.get("model_to_live_entry_difference_pts"), errors="coerce").abs().dropna()
     exit_diff = pd.to_numeric(matched.get("model_to_live_exit_difference_pts"), errors="coerce").abs().dropna()
+    total_slip_pts = pd.to_numeric(matched.get("points_delta"), errors="coerce")
+
+    matched_aud_cost = pd.Series(dtype=float)
+    if not matched.empty and aud_rate_map:
+        tgt_month = pd.to_datetime(matched.get("mt5_entry_time_utc"), errors="coerce").dt.to_period("M").astype("string")
+        aud_rate_series = pd.to_numeric(tgt_month.map(aud_rate_map), errors="coerce")
+        matched_aud_cost = total_slip_pts * pd.to_numeric(matched.get("mt5_qty"), errors="coerce") * aud_rate_series
+    total_matched_aud_cost = float(matched_aud_cost.sum()) if not matched_aud_cost.empty else 0.0
+    avg_matched_aud_cost = float(matched_aud_cost.mean()) if not matched_aud_cost.empty else 0.0
+
+    instrument_label = _instrument_label(nt_df, mt5_df)
 
     status_rows = [
         ["Missed trades", len(unmatched_nt) + len(unmatched_mt5)],
         ["Avg points difference (Target-Source)", round(avg_points_diff, 4)],
         ["Profit factor difference (Target-Source)", round(pf_diff, 4)],
         ["Net profit delta", round(net_profit_delta, 2)],
+        ["Matched MT5 actual cost (AUD)", round(total_matched_aud_cost, 2)],
     ]
 
     full_metrics = [
@@ -136,7 +173,7 @@ def generate_daily_report_xlsx(data: dict, mt5_timezone: str, matching_mode_labe
 
     ws["A1"] = "Source vs Target Post-Trade Comparison"
     ws["A2"] = f"Prepared: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-    ws["A3"] = "Instrument: NASDAQ (MNQ / NAS100)"
+    ws["A3"] = instrument_label
     ws["A4"] = "Unit: Points"
     ws["A1"].font = Font(bold=True, size=14)
 
@@ -154,6 +191,8 @@ def generate_daily_report_xlsx(data: dict, mt5_timezone: str, matching_mode_labe
             ["Net profit delta", round(net_profit_delta, 2)],
             ["Avg Target-Source Entry Difference (pts)", round(float(entry_diff.mean()), 4) if not entry_diff.empty else 0.0],
             ["Avg Target-Source Exit Difference (pts)", round(float(exit_diff.mean()), 4) if not exit_diff.empty else 0.0],
+            ["Matched MT5 actual cost (AUD)", round(total_matched_aud_cost, 2)],
+            ["Avg matched MT5 actual cost (AUD)", round(avg_matched_aud_cost, 4)],
         ],
     )
 
@@ -176,6 +215,7 @@ def generate_daily_report_xlsx(data: dict, mt5_timezone: str, matching_mode_labe
             ["Total Source Profit", float(nt_total_profit) if pd.notna(nt_total_profit) else None],
             ["Profit Difference (Target-Source)", float(mt5_total_profit - nt_total_profit) if pd.notna(mt5_total_profit) and pd.notna(nt_total_profit) else None],
             ["Matched-only PnL difference", net_profit_delta],
+            ["Matched MT5 actual cost (AUD)", total_matched_aud_cost],
         ],
     )
 
@@ -186,6 +226,7 @@ def generate_daily_report_xlsx(data: dict, mt5_timezone: str, matching_mode_labe
         f"Avg points difference (Target-Source): {avg_points_diff:.4f}.",
         f"Profit factor difference (Target-Source): {pf_diff:.4f}.",
         f"Net profit delta: {net_profit_delta:.2f}.",
+        f"Matched MT5 actual cost (AUD): {total_matched_aud_cost:.2f}.",
     ]
     for t in takeaways:
         ws.cell(row=row, column=1, value=f"- {t}")
@@ -197,8 +238,9 @@ def generate_daily_report_xlsx(data: dict, mt5_timezone: str, matching_mode_labe
         f"Timezone: Source uses America/New_York when CSV importer is used | Target uses {mt5_timezone}",
         f"Date range filter: {date_range_start} .. {date_range_end}" if date_range_start and date_range_end else "Date range filter: Not set",
         "Points calculation: BUY = Exit - Entry | SELL = Entry - Exit",
-        "Sequential mode pairs trades by order.",
-        f"Current algorithm: {matching_mode_label}",
+        f"Current matching mode: {matching_mode_label}",
+        "Matched-trade metrics are calculated only on matched pairs; unmatched trades are excluded from slippage and points totals.",
+        "MT5 actual cost (AUD) is calculated from matched trade slip points, MT5 quantity, and the configured monthly AUD rates.",
     ]
     for n in notes:
         ws.cell(row=row, column=1, value=n)

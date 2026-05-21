@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from dataclasses import dataclass
@@ -82,6 +82,13 @@ class ClosedTransactionsCandidate:
     table_idx: int
     caption: str
     headers: list[str]
+    df: pd.DataFrame
+
+
+@dataclass
+class PositionsReportCandidate:
+    table_idx: int
+    caption: str
     df: pd.DataFrame
 
 
@@ -190,6 +197,39 @@ def _extract_closed_transactions_sections(tables: list[pd.DataFrame]) -> list[Cl
     return candidates
 
 
+def _extract_positions_report_sections(tables: list[pd.DataFrame]) -> list[PositionsReportCandidate]:
+    candidates: list[PositionsReportCandidate] = []
+    stop_markers = {"orders", "deals", "working_orders", "open_trades", "closed_transactions", "total_trades"}
+
+    for table_idx, table in enumerate(tables):
+        raw = table.copy()
+        raw.columns = [str(c) for c in raw.columns]
+        row_idx = 0
+        while row_idx < len(raw):
+            marker = _clean(_first_non_empty(raw.iloc[row_idx].tolist()))
+            if marker != "positions":
+                row_idx += 1
+                continue
+
+            data_start = row_idx + 2
+            next_marker = len(raw)
+            scan = data_start
+            while scan < len(raw):
+                scan_marker = _clean(_first_non_empty(raw.iloc[scan].tolist()))
+                if scan_marker in stop_markers:
+                    next_marker = scan
+                    break
+                scan += 1
+
+            section_df = raw.iloc[data_start:next_marker].copy()
+            if not section_df.empty:
+                section_df = section_df[~section_df.apply(lambda r: _is_blank_row(r.tolist()), axis=1)].reset_index(drop=True)
+                candidates.append(PositionsReportCandidate(table_idx=table_idx, caption="Positions", df=section_df))
+            row_idx = next_marker
+
+    return candidates
+
+
 def _has_required_deals_headers(headers: list[str]) -> tuple[bool, int]:
     normalized = {_clean(h) for h in headers}
     required = {"time", "symbol", "type", "direction", "volume", "price"}
@@ -286,14 +326,14 @@ def _normalize_closed_transactions_rows(
     open_time_col = _find_col(lookup, ["open_time"])
     close_time_col = _find_col(lookup, ["close_time"])
     symbol_col = _find_col(lookup, ["item", "symbol", "instrument"])
-    type_col = _find_col(lookup, ["type"])
-    qty_col = _find_col(lookup, ["size", "volume", "qty", "quantity"])
+    type_col = _find_col(lookup, ["type", "buy_sell"])
+    qty_col = _find_col(lookup, ["size", "volume", "qty", "quantity", "lots"])
     entry_price_col = _find_col(lookup, ["price", "open_price"])
     exit_price_col = _find_col(lookup, ["price_1", "close_price"])
     commission_col = _find_col(lookup, ["commission"])
     taxes_col = _find_col(lookup, ["taxes", "tax"])
     swap_col = _find_col(lookup, ["swap"])
-    profit_col = _find_col(lookup, ["profit"])
+    profit_col = _find_col(lookup, ["profit", "net_profit", "pnl", "result"])
 
     required = [open_time_col, close_time_col, symbol_col, type_col, qty_col, entry_price_col, exit_price_col]
     if any(col is None for col in required):
@@ -325,6 +365,53 @@ def _normalize_closed_transactions_rows(
     out = out[out["entry_time_utc"].notna() & out["exit_time_utc"].notna()].copy()
     out = out[out["entry_price"].notna() & out["exit_price"].notna()].copy()
     return coerce_normalized(out).reset_index(drop=True)
+
+
+def _normalize_positions_report_rows(
+    df: pd.DataFrame, symbol_map: dict[str, str], mt5_timezone: str, source_label: str
+) -> pd.DataFrame:
+    def _value(frame: pd.DataFrame, idx: int) -> pd.Series:
+        if idx in frame.columns:
+            return frame[idx]
+        text_idx = str(idx)
+        if text_idx in frame.columns:
+            return frame[text_idx]
+        return pd.Series([""] * len(frame), index=frame.index)
+
+    strategy_cols = [idx for idx in range(4, 12) if idx in df.columns or str(idx) in df.columns]
+    strategy_tag = pd.Series([""] * len(df), index=df.index, dtype="object")
+    for idx in strategy_cols:
+        current = _value(df, idx).astype(str).str.strip()
+        strategy_tag = strategy_tag.where(strategy_tag.str.len() > 0, current)
+
+    out = pd.DataFrame(
+        {
+            "source": source_label,
+            "trade_id": _value(df, 1).astype(str).str.strip(),
+            "symbol_raw": _value(df, 2).astype(str).str.strip(),
+            "side": _value(df, 3).astype(str).map(lambda s: normalize_side(str(s))),
+            "qty": _to_volume_num(_value(df, 12)),
+            "entry_time_utc": to_utc_naive(pd.to_datetime(_value(df, 0), errors="coerce"), mt5_timezone),
+            "exit_time_utc": to_utc_naive(pd.to_datetime(_value(df, 16), errors="coerce"), mt5_timezone),
+            "entry_price": _to_num(_value(df, 13)),
+            "exit_price": _to_num(_value(df, 17)),
+            "commission": _to_num(_value(df, 18)),
+            "swap": _to_num(_value(df, 19)),
+            "profit_raw": _to_num(_value(df, 20)),
+            "strategy_tag": strategy_tag.astype(str).str.strip(),
+        }
+    )
+    out["symbol_norm"] = out["symbol_raw"].map(lambda s: normalize_symbol(str(s), symbol_map))
+    out["net_profit"] = out["profit_raw"].fillna(0.0) + out["commission"].fillna(0.0) + out["swap"].fillna(0.0)
+    out = out[out["side"].isin(["BUY", "SELL"])].copy()
+    out = out[out["symbol_raw"].str.len() > 0].copy()
+    out = out[out["qty"].notna() & (out["qty"] > 0)].copy()
+    out = out[out["entry_time_utc"].notna() & out["exit_time_utc"].notna()].copy()
+    out = out[out["entry_price"].notna() & out["exit_price"].notna()].copy()
+    out["strategy_tag"] = out["strategy_tag"].replace({"nan": "", "None": ""})
+    normalized = coerce_normalized(out).reset_index(drop=True)
+    normalized["strategy_tag"] = out.loc[normalized.index, "strategy_tag"].astype(str).str.strip().replace({"nan": "", "None": ""})
+    return normalized
 
 
 def _reconstruct_closed_trades(deals: pd.DataFrame, symbol_map: dict[str, str], mt5_timezone: str, source_label: str) -> pd.DataFrame:
@@ -377,7 +464,20 @@ def _reconstruct_closed_trades(deals: pd.DataFrame, symbol_map: dict[str, str], 
                     continue
                 if not ("out" in d or "close" in d or "exit" in d):
                     continue
-                match_idx = next((i for i, q in enumerate(queue) if q["side"] != row["side"]), None)
+                # Preserve lifecycle in hedging-style streams: prefer exact-volume
+                # opposite-side opens first, then fall back to most-recent opposite side.
+                row_volume = float(row.get("volume", 0.0))
+                eps = 1e-9
+                match_idx = next(
+                    (
+                        i
+                        for i in range(len(queue) - 1, -1, -1)
+                        if queue[i]["side"] != row["side"] and abs(float(queue[i].get("volume", 0.0)) - row_volume) <= eps
+                    ),
+                    None,
+                )
+                if match_idx is None:
+                    match_idx = next((i for i in range(len(queue) - 1, -1, -1) if queue[i]["side"] != row["side"]), None)
                 if match_idx is None:
                     continue
                 entry = queue.pop(match_idx)
@@ -418,6 +518,11 @@ def load_mt5_html(file_obj, symbol_map: dict[str, str], mt5_timezone: str = "UTC
 
     candidates, summaries = _extract_deals_sections(tables)
     trade_source = "mt5_backtest" if "backtest" in source_label.lower() else "mt5_live"
+
+    positions_candidates = _extract_positions_report_sections(tables)
+    if positions_candidates:
+        return _normalize_positions_report_rows(positions_candidates[0].df, symbol_map, mt5_timezone, trade_source)
+
     if candidates:
         try:
             selected = _select_deals_table(candidates, summaries)
@@ -432,8 +537,20 @@ def load_mt5_html(file_obj, symbol_map: dict[str, str], mt5_timezone: str = "UTC
         selected_closed = _select_closed_transactions_table(closed_candidates, summaries)
         return _normalize_closed_transactions_rows(selected_closed.df, symbol_map, mt5_timezone, trade_source)
 
+    for table in tables:
+        try:
+            direct_closed = _normalize_closed_transactions_rows(table, symbol_map, mt5_timezone, trade_source)
+        except ValueError:
+            continue
+        if not direct_closed.empty:
+            return direct_closed
+
     detail = "; ".join([f"table={idx} caption={cap!r} headers={hdrs}" for idx, cap, hdrs in summaries])
     raise ValueError(
         "No supported MT5 trades table found. Expected Deals section or Closed Transactions section. "
         f"Available tables: {detail}"
     )
+
+
+
+

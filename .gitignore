@@ -13,6 +13,15 @@ installer/Output/
 # Runtime data
 *.log
 pta.duckdb
+*.duckdb
+*.htm
+*.html
+*.xlsx
+data/raw/
+reports/
+reports_tmp/
+reports_tmp2/
+reports_tmp3/
 
 # Windows ProgramData-style paths
 ProgramData/

@@ -25,6 +25,34 @@ py -m venv .venv
 py -m pip install -r requirements.txt
 ```
 
+Use `requirements.txt` for the Streamlit dashboard runtime, including Streamlit
+Community Cloud. For the Windows desktop agent/installer build, install:
+
+```powershell
+py -m pip install -r requirements-desktop.txt
+```
+
+For local test runs, install:
+
+```powershell
+py -m pip install -r requirements-dev.txt
+```
+
+## Deploy to Streamlit Community Cloud
+
+1. Push this repository to GitHub.
+2. In Streamlit Community Cloud, create a new app from the GitHub repository.
+3. Set the main file path to `app.py`.
+4. Deploy. Streamlit will install `requirements.txt` and use `runtime.txt`.
+5. Use **Upload files** in the sidebar. Local path loading only sees files that
+   exist inside the deployed container, not files on your computer.
+
+Community Cloud storage is ephemeral. Uploaded files, `reports/`, and the
+default DuckDB history at `data/pta.duckdb` can disappear on app restart,
+redeploy, or sleep/wake cycles. Download reports you want to keep, or set
+`PTA_DB_PATH` / `PTA_REPORTS_DIR` for another hosting target with persistent
+storage.
+
 ## Supported Inputs
 
 - MT5 Strategy Tester report: `.html` / `.htm`
