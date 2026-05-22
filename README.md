@@ -43,8 +43,12 @@ py -m pip install -r requirements-dev.txt
 1. Push this repository to GitHub.
 2. In Streamlit Community Cloud, create a new app from the GitHub repository.
 3. Set the main file path to `app.py`.
-4. Deploy. Streamlit will install `requirements.txt` and use `runtime.txt`.
-5. Use **Upload files** in the sidebar. Local path loading only sees files that
+4. Click **Advanced settings** and choose Python 3.12. Community Cloud does not
+   use `runtime.txt` to change Python for an already-created app; delete and
+   redeploy the app if it was created with the wrong Python version.
+5. Deploy. Streamlit will install `requirements.txt` and system packages from
+   `packages.txt`.
+6. Use **Upload files** in the sidebar. Local path loading only sees files that
    exist inside the deployed container, not files on your computer.
 
 Community Cloud storage is ephemeral. Uploaded files, `reports/`, and the
