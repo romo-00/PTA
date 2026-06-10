@@ -9,6 +9,7 @@ from importers.mt5_xlsx import load_mt5_xlsx
 from importers.ninjatrader_csv import load_ninjatrader_csv, load_ninjatrader_xlsx
 from normalization import to_utc_naive
 from trade_matching import MatchConfig, match_trades
+from app import _apply_symbol_filter, _symbol_filter_options
 
 
 def test_ninjatrader_timezone_normalization_to_utc():
@@ -59,6 +60,16 @@ def test_mt5_datetime_construction_from_date_time_columns():
     df = load_mt5_xlsx(bio, {"MNQ*": "NAS100"}, mt5_timezone="UTC")
     assert df.iloc[0]["entry_time_utc"] == pd.Timestamp("2026-01-02 12:30:15")
     assert df.iloc[0]["exit_time_utc"] == pd.Timestamp("2026-01-02 13:00:15")
+
+
+def test_symbol_filter_options_and_filter_are_normalized():
+    left = pd.DataFrame({"symbol_norm": ["AUS200", "NAS100", "UNKNOWN", None], "value": [1, 2, 3, 4]})
+    right = pd.DataFrame({"symbol_norm": ["aus200", "XAUUSD"], "value": [5, 6]})
+
+    assert _symbol_filter_options(left, right) == ["AUS200", "NAS100", "XAUUSD"]
+
+    filtered = _apply_symbol_filter(left, ["aus200"])
+    assert filtered["value"].tolist() == [1]
 
 
 def test_mt5_broker_dst_timezone_converts_winter_and_summer_correctly():

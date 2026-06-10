@@ -431,6 +431,24 @@ def _apply_entry_date_filter(df: pd.DataFrame, start_date: pd.Timestamp | None, 
     return df[mask].copy()
 
 
+def _symbol_filter_options(*dfs: pd.DataFrame) -> list[str]:
+    symbols: set[str] = set()
+    for df in dfs:
+        if df is None or df.empty or "symbol_norm" not in df.columns:
+            continue
+        values = df["symbol_norm"].astype(str).str.strip().str.upper()
+        symbols.update(symbol for symbol in values if symbol and symbol.lower() not in {"nan", "none", "unknown"})
+    return sorted(symbols)
+
+
+def _apply_symbol_filter(df: pd.DataFrame, symbols: list[str] | tuple[str, ...] | set[str]) -> pd.DataFrame:
+    selected = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
+    if not selected or df.empty or "symbol_norm" not in df.columns:
+        return df
+    normalized = df["symbol_norm"].astype(str).str.strip().str.upper()
+    return df[normalized.isin(selected)].copy()
+
+
 def _labels_from_data(data: dict) -> tuple[str, str]:
     settings = data.get("settings", {}) if isinstance(data, dict) else {}
     left = settings.get("left_label")
@@ -533,6 +551,14 @@ def run_comparison(
     if use_date_filter and date_filter_start is not None and date_filter_end is not None:
         left_norm = _apply_entry_date_filter(left_norm, date_filter_start, date_filter_end)
         right_norm = _apply_entry_date_filter(right_norm, date_filter_start, date_filter_end)
+
+    symbol_filter = settings.get("symbol_filter", [])
+    if isinstance(symbol_filter, str):
+        symbol_filter = [symbol_filter] if symbol_filter and symbol_filter != "All" else []
+    if symbol_filter:
+        left_norm = _apply_symbol_filter(left_norm, symbol_filter)
+        right_norm = _apply_symbol_filter(right_norm, symbol_filter)
+        settings["symbol_filter"] = [str(symbol) for symbol in symbol_filter]
 
     # Align MT5 HTML source/target comparisons to overlapping date window.
     if left_kind == "mt5_backtest_html" and right_kind == "mt5_live_html" and not left_norm.empty and not right_norm.empty:
@@ -1054,6 +1080,7 @@ def main() -> None:
     aud_rate_default = "\n".join(f"{k}={v}" for k, v in DEFAULT_AUD_RATE_MAP.items())
     aud_rate_map = DEFAULT_AUD_RATE_MAP.copy()
     strategy_tag_filter = "All"
+    symbol_filter: list[str] = []
 
     left_columns = set(_peek_table_columns(left_file, left_filename)) if left_file is not None and left_filename else set()
     right_columns = set(_peek_table_columns(right_file, right_filename)) if right_file is not None and right_filename else set()
@@ -1151,6 +1178,18 @@ def main() -> None:
         if parsed_aud_rate_map:
             aud_rate_map = parsed_aud_rate_map
 
+    st.sidebar.markdown("### Instrument Filter")
+    symbol_options = _symbol_filter_options(left_preview, right_preview)
+    if symbol_options:
+        symbol_filter = st.sidebar.multiselect(
+            "Only include symbols",
+            options=symbol_options,
+            default=[],
+            help="Filters both Source and Target trades before matching. Leave blank to include all instruments.",
+        )
+    else:
+        st.sidebar.caption("Instrument options will appear after both files can be read.")
+
     st.sidebar.markdown("### Date Range Filter")
 
     today = pd.Timestamp.utcnow().tz_localize(None).date()
@@ -1179,7 +1218,7 @@ def main() -> None:
         st.sidebar.caption("Available data range: not detected yet")
 
     run_clicked = st.sidebar.button("Run comparison", type="primary")
-    filter_signature = (bool(use_date_filter), str(date_filter_start), str(date_filter_end))
+    filter_signature = (bool(use_date_filter), str(date_filter_start), str(date_filter_end), tuple(symbol_filter))
     prev_filter_signature = st.session_state.get("last_filter_signature")
     auto_rerun = (
         "comparison_result" in st.session_state
@@ -1220,6 +1259,7 @@ def main() -> None:
                 "entry_price_tolerance": float(entry_price_tolerance),
                 "exit_price_tolerance": float(exit_price_tolerance),
                 "strategy_tag_filter": strategy_tag_filter,
+                "symbol_filter": symbol_filter,
                 "symbol_map": symbol_map,
                 "aud_rate_map": aud_rate_map,
                 "left_kind": left_kind,
