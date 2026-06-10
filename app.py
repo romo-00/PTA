@@ -55,6 +55,9 @@ DEFAULT_AUD_RATE_MAP = {
     "2026-01": 1.475512,
     "2026-02": 1.417203,
     "2026-03": 1.419078,
+    "2026-04": 1.413474,
+    "2026-05": 1.391811,
+    "2026-06": 1.409388,
 }
 REPORTS_DIR = Path(os.getenv("PTA_REPORTS_DIR", "reports"))
 SUPPORTED_UPLOAD_TYPES = ["csv", "xlsx", "html", "htm"]
