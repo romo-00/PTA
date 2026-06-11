@@ -15,6 +15,7 @@ from importers.mt5_html import load_mt5_html
 from importers.mt5_xlsx import load_mt5_xlsx, peek_mt5_xlsx_columns
 from importers.ninjatrader_csv import NT_TIMEZONE, load_ninjatrader_csv, load_ninjatrader_xlsx
 from persistence import load_run, persist_run, run_history, trend_history
+from pdf_report import generate_post_trade_pdf
 from trade_matching import MatchConfig, match_trades
 
 DEFAULT_SYMBOL_MAP = {
@@ -642,25 +643,44 @@ def run_comparison(
 
 
 def render_export_daily_report(data: dict, mt5_timezone: str) -> None:
-    st.subheader("Daily Report Export")
-    if st.button("Export Daily Report (XLSX)", key="export_daily_report_btn"):
-        try:
-            settings = data.get("settings", {}) if isinstance(data, dict) else {}
-            mode_label = settings.get("matching_mode_label", settings.get("algorithm", "Time"))
-            out_path, out_bytes = generate_daily_report_xlsx(data=data, mt5_timezone=mt5_timezone, matching_mode_label=str(mode_label))
-            st.session_state["daily_report_bytes"] = out_bytes
-            st.session_state["daily_report_name"] = out_path.name
-            st.success(f"Daily report generated: {out_path}")
-        except Exception as exc:
-            st.exception(exc)
+    st.subheader("Report Export")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Export Daily Report (XLSX)", key="export_daily_report_btn"):
+            try:
+                settings = data.get("settings", {}) if isinstance(data, dict) else {}
+                mode_label = settings.get("matching_mode_label", settings.get("algorithm", "Time"))
+                out_path, out_bytes = generate_daily_report_xlsx(data=data, mt5_timezone=mt5_timezone, matching_mode_label=str(mode_label))
+                st.session_state["daily_report_bytes"] = out_bytes
+                st.session_state["daily_report_name"] = out_path.name
+                st.success(f"Daily report generated: {out_path}")
+            except Exception as exc:
+                st.exception(exc)
 
-    if "daily_report_bytes" in st.session_state:
-        st.download_button(
-            "Download Daily Report (XLSX)",
-            data=st.session_state["daily_report_bytes"],
-            file_name=st.session_state.get("daily_report_name", "Source_vs_Target_Daily_Report.xlsx"),
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+        if "daily_report_bytes" in st.session_state:
+            st.download_button(
+                "Download Daily Report (XLSX)",
+                data=st.session_state["daily_report_bytes"],
+                file_name=st.session_state.get("daily_report_name", "Source_vs_Target_Daily_Report.xlsx"),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+    with c2:
+        if st.button("Export PDF Report", key="export_pdf_report_btn"):
+            try:
+                pdf_name, pdf_bytes = generate_post_trade_pdf(data=data, mt5_timezone=mt5_timezone)
+                st.session_state["pdf_report_bytes"] = pdf_bytes
+                st.session_state["pdf_report_name"] = pdf_name
+                st.success(f"PDF report generated: {pdf_name}")
+            except Exception as exc:
+                st.exception(exc)
+
+        if "pdf_report_bytes" in st.session_state:
+            st.download_button(
+                "Download PDF Report",
+                data=st.session_state["pdf_report_bytes"],
+                file_name=st.session_state.get("pdf_report_name", "PTA_Post_Trade_Report.pdf"),
+                mime="application/pdf",
+            )
 
 
 def render_overview(data: dict[str, pd.DataFrame]) -> None:
